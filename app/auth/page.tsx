@@ -8,7 +8,7 @@ import {
   BadgeCheck,
   Building2,
   Github,
-  IdCard,
+  Contact,
   KeyRound,
   Link as LinkIcon,
   Loader2,
@@ -24,6 +24,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { signIn, useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 
 const roleTabs = [
   { key: "participant", label: "Participant" },
@@ -586,6 +587,8 @@ function CardGlow({ children }: { children: React.ReactNode }) {
 function ParticipantPanel() {
   const { data: session, status } = useSession();
   const isAuthed = !!session?.user;
+  const router = useRouter();
+  const [apiError, setApiError] = React.useState<string | null>(null);
 
   const [submitState, setSubmitState] = React.useState<"idle" | "saving" | "saved">("idle");
 
@@ -609,15 +612,30 @@ function ParticipantPanel() {
 
   const onSubmit = form.handleSubmit(async (values) => {
     setSubmitState("saving");
+    setApiError(null);
 
-    // This is intentionally a client-only stub.
-    // Wire this to your onboarding API route (e.g., POST /api/onboarding/participant).
-    await new Promise((r) => setTimeout(r, 650));
-    // eslint-disable-next-line no-console
-    console.log("Participant onboarding payload", values);
+    try {
+      const res = await fetch("/api/onboarding/participant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
 
-    setSubmitState("saved");
-    setTimeout(() => setSubmitState("idle"), 1600);
+      const data = await res.json();
+
+      if (!res.ok) {
+        setApiError(data.error || "Onboarding failed");
+        setSubmitState("idle");
+        return;
+      }
+
+      setSubmitState("saved");
+      // Redirect participant to their dashboard
+      setTimeout(() => router.push("/participant-dashboard"), 800);
+    } catch (err) {
+      setApiError("Network error. Please try again.");
+      setSubmitState("idle");
+    }
   });
 
   return (
@@ -672,7 +690,7 @@ function ParticipantPanel() {
             <div className="grid gap-4">
               <div>
                 <FieldLabel>Hackathon Invite Code / Event ID</FieldLabel>
-                <InputShell icon={<IdCard className="h-4 w-4" />}>
+                <InputShell icon={<Contact className="h-4 w-4" />}>
                   <TextInput
                     placeholder="e.g. COMMITLENS-2026-FEB"
                     {...form.register("eventCode")}
@@ -756,6 +774,12 @@ function ParticipantPanel() {
               />
             </div>
 
+            {apiError && (
+              <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-xs text-rose-300">
+                {apiError}
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={!form.formState.isValid || submitState === "saving"}
@@ -766,7 +790,7 @@ function ParticipantPanel() {
               )}
             >
               {submitState === "saving" ? <Loader2 className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />}
-              {submitState === "saved" ? "Saved" : "Complete Registration"}
+              {submitState === "saved" ? "Redirecting to dashboard..." : "Complete Registration"}
             </button>
           </motion.form>
         ) : (
@@ -787,9 +811,11 @@ function ParticipantPanel() {
 }
 
 function OrganizerPanel() {
+  const router = useRouter();
   const [submitState, setSubmitState] = React.useState<"idle" | "saving" | "saved">("idle");
   const [signinState, setSigninState] = React.useState<"idle" | "signingIn">("idle");
   const [logoFileName, setLogoFileName] = React.useState<string>("");
+  const [apiError, setApiError] = React.useState<string | null>(null);
 
   const form = useForm<OrganizerValues>({
     resolver: zodResolver(organizerSchema),
@@ -807,15 +833,51 @@ function OrganizerPanel() {
 
   const onSubmit = form.handleSubmit(async (values) => {
     setSubmitState("saving");
+    setApiError(null);
 
-    // Client-only stub.
-    // Wire to your signup API route (e.g., POST /api/auth/organizer/signup).
-    await new Promise((r) => setTimeout(r, 650));
-    // eslint-disable-next-line no-console
-    console.log("Organizer signup payload", { ...values, logoFileName: logoFileName || undefined });
+    try {
+      const res = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "organizer",
+          fullName: values.fullName,
+          workEmail: values.workEmail,
+          password: values.password,
+          organizationName: values.organizationName,
+          contactPhoneNumber: values.contactPhoneNumber,
+          designation: values.designation,
+          organizationLogoUrl: values.organizationLogoUrl || undefined,
+        }),
+      });
 
-    setSubmitState("saved");
-    setTimeout(() => setSubmitState("idle"), 1600);
+      const data = await res.json();
+
+      if (!res.ok) {
+        setApiError(data.error || "Signup failed");
+        setSubmitState("idle");
+        return;
+      }
+
+      // Auto sign-in after successful signup
+      const signInResult = await signIn("credentials", {
+        email: values.workEmail,
+        password: values.password,
+        redirect: false,
+      });
+
+      if (signInResult?.error) {
+        setApiError("Account created but sign-in failed. Please sign in manually.");
+        setSubmitState("idle");
+        return;
+      }
+
+      setSubmitState("saved");
+      setTimeout(() => router.push("/organizer-dashboard"), 800);
+    } catch (err) {
+      setApiError("Network error. Please try again.");
+      setSubmitState("idle");
+    }
   });
 
   const onSignIn = async () => {
@@ -826,12 +888,21 @@ function OrganizerPanel() {
     }
 
     setSigninState("signingIn");
+    setApiError(null);
     try {
-      await signIn("credentials", {
+      const result = await signIn("credentials", {
         email: workEmail,
         password,
-        callbackUrl: "/",
+        redirect: false,
       });
+
+      if (result?.error) {
+        setApiError("Invalid email or password");
+      } else {
+        router.push("/organizer-dashboard");
+      }
+    } catch (err) {
+      setApiError("Sign-in failed. Please try again.");
     } finally {
       setSigninState("idle");
     }
@@ -842,7 +913,7 @@ function OrganizerPanel() {
       <div className="grid gap-4">
         <div>
           <FieldLabel>Full Name</FieldLabel>
-          <InputShell icon={<IdCard className="h-4 w-4" />}>
+          <InputShell icon={<Contact className="h-4 w-4" />}>
             <TextInput placeholder="e.g. Alex Chen" {...form.register("fullName")} autoComplete="name" />
           </InputShell>
           <FieldError message={form.formState.errors.fullName?.message} />
@@ -957,6 +1028,12 @@ function OrganizerPanel() {
         </div>
       </div>
 
+      {apiError && (
+        <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-xs text-rose-300">
+          {apiError}
+        </div>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2">
         <button
           type="submit"
@@ -1001,9 +1078,11 @@ function OrganizerPanel() {
 }
 
 function JudgeMentorPanel() {
+  const router = useRouter();
   const [mode, setMode] = React.useState<JudgeMentorMode>("Judge");
   const [submitState, setSubmitState] = React.useState<"idle" | "saving" | "saved">("idle");
   const [signinState, setSigninState] = React.useState<"idle" | "signingIn">("idle");
+  const [apiError, setApiError] = React.useState<string | null>(null);
 
   const form = useForm<JudgeMentorValues>({
     resolver: zodResolver(judgeMentorSchema),
@@ -1030,15 +1109,52 @@ function JudgeMentorPanel() {
 
   const onSubmit = form.handleSubmit(async (values) => {
     setSubmitState("saving");
+    setApiError(null);
 
-    // Client-only stub.
-    // Wire to your signup API route (e.g., POST /api/auth/judge-mentor/signup).
-    await new Promise((r) => setTimeout(r, 650));
-    // eslint-disable-next-line no-console
-    console.log("Judge/Mentor signup payload", values);
+    try {
+      const res = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "judge",
+          fullName: values.fullName,
+          email: values.email,
+          password: values.password,
+          hackathonAccessToken: values.hackathonAccessToken,
+          domainExpertise: values.domainExpertise,
+          linkedInOrPortfolioUrl: values.linkedInOrPortfolioUrl,
+          availabilityShift: values.availabilityShift || undefined,
+          conflictOfInterestAccepted: values.conflictOfInterestAccepted,
+        }),
+      });
 
-    setSubmitState("saved");
-    setTimeout(() => setSubmitState("idle"), 1600);
+      const data = await res.json();
+
+      if (!res.ok) {
+        setApiError(data.error || "Signup failed");
+        setSubmitState("idle");
+        return;
+      }
+
+      // Auto sign-in after successful signup
+      const signInResult = await signIn("credentials", {
+        email: values.email,
+        password: values.password,
+        redirect: false,
+      });
+
+      if (signInResult?.error) {
+        setApiError("Account created but sign-in failed. Please sign in manually.");
+        setSubmitState("idle");
+        return;
+      }
+
+      setSubmitState("saved");
+      setTimeout(() => router.push("/judge-dashboard"), 800);
+    } catch (err) {
+      setApiError("Network error. Please try again.");
+      setSubmitState("idle");
+    }
   });
 
   const onSignIn = async () => {
@@ -1049,12 +1165,21 @@ function JudgeMentorPanel() {
     }
 
     setSigninState("signingIn");
+    setApiError(null);
     try {
-      await signIn("credentials", {
+      const result = await signIn("credentials", {
         email,
         password,
-        callbackUrl: "/",
+        redirect: false,
       });
+
+      if (result?.error) {
+        setApiError("Invalid email or password");
+      } else {
+        router.push("/judge-dashboard");
+      }
+    } catch (err) {
+      setApiError("Sign-in failed. Please try again.");
     } finally {
       setSigninState("idle");
     }
@@ -1082,7 +1207,7 @@ function JudgeMentorPanel() {
       <div className="grid gap-4">
         <div>
           <FieldLabel>Full Name</FieldLabel>
-          <InputShell icon={<IdCard className="h-4 w-4" />}>
+          <InputShell icon={<Contact className="h-4 w-4" />}>
             <TextInput placeholder="e.g. Priya Singh" {...form.register("fullName")} autoComplete="name" />
           </InputShell>
           <FieldError message={form.formState.errors.fullName?.message} />
@@ -1190,6 +1315,12 @@ function JudgeMentorPanel() {
           error={form.formState.errors.conflictOfInterestAccepted?.message}
         />
       </div>
+
+      {apiError && (
+        <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-xs text-rose-300">
+          {apiError}
+        </div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <button

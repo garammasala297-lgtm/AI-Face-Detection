@@ -75,10 +75,10 @@ export interface Team {
 export type SortOption = "fairness" | "innovation" | "violations";
 
 export interface Toast {
-  id: number;
+  id: string;
   type: "success" | "warning" | "info" | "error";
-  title: string;
   message: string;
+  duration: number;
 }
 
 export interface JudgeState {
@@ -86,4 +86,6 @@ export interface JudgeState {
   selectedTeamId: string | null;
   sortBy: SortOption;
   filterShortlisted: boolean;
+  isLoading: boolean;
+  error: string | null;
 }
